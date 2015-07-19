@@ -26,6 +26,8 @@
     'filter_unsupported.cc',
     'io_service.cc',
     'io_service.h',
+    'io_service_no_ssl.cc',
+    'io_service_no_ssl.h',
     'io_service_unsupported.cc',
     'platform.cc',
     'platform.h',
@@ -61,11 +63,15 @@
       'conditions': [
         ['dart_io_secure_socket==1', {
           'sources!' : [
+            'io_service_no_ssl.cc',
+            'io_service_no_ssl.h',
             'secure_socket_unsupported.cc',
           ],
         }, {  # else dart_io_secure_socket == 0
           'sources!' : [
             '../../third_party/root_certificates/root_certificates.cc',
+            'io_service.cc',
+            'io_service.h',
             'secure_socket.cc',
             'secure_socket.h',
           ],
@@ -81,6 +87,8 @@
         'filter.h',
         'io_service.cc',
         'io_service.h',
+        'io_service_no_ssl.cc',
+        'io_service_no_ssl.h',
         '../../third_party/root_certificates/root_certificates.cc',
         'secure_socket.cc',
         'secure_socket.h',

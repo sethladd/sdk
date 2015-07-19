@@ -290,6 +290,10 @@
         ['dart_io_support==1', {
           'dependencies': [
             'bin/net/zlib.gyp:zlib_dart',
+          ],
+        }],
+        ['dart_io_support==1 and dart_io_secure_socket==1', {
+          'dependencies': [
             '../third_party/boringssl/boringssl_dart.gyp:boringssl',
           ],
         }],
