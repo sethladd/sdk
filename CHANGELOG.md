@@ -2,8 +2,18 @@
 
 ### Core library changes
 
+* `dart:async`
+  * `StreamController`  added setters for the `onListen`, `onPause`, `onResume`
+    and `onCancel` callbacks.
+
 * `dart:convert`
   * `LineSplitter` added a `split` static method returning an `Iterable`.
+
+* `dart:core`
+  * `Uri` class now perform path normalization when a URI is created.
+    This removes most `..` and `.` sequences from the URI path.
+    Purely relative paths (no scheme or authority) are allowed to retain
+    some leading "dot" segments.
 
 * `dart:html`
   * `NodeTreeSanitizer` added the `const trusted` field. It can be used
@@ -57,6 +67,13 @@
       package that defines it has been fixed.
 
 [package spec proposal]: https://github.com/lrhn/dep-pkgspec
+
+## 1.11.2
+
+### Core library changes
+
+* Fix a bug where `WebSocket.close()` would crash if called after
+  `WebSocket.cancel()`.
 
 ## 1.11.1
 

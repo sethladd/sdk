@@ -38,7 +38,7 @@ vars = {
 
   # Revisions of /third_party/* dependencies.
   "7zip_rev" : "@19997",
-  "analyzer_cli_rev" : "@5069b75f6ccef59b2ba4e2c382bc000037290125",
+  "analyzer_cli_rev" : "@7436b45b160f99e806bef2aafd1e971e1aedfc4d",
   "args_tag": "@0.13.0",
   "async_tag": "@1.2.0",
   "barback_rev" : "@29ee90dbcf77cfd64632fa2797a4c8a4f29a4b51",
@@ -50,7 +50,7 @@ vars = {
   "collection_rev": "@1da9a07f32efa2ba0c391b289e2037391e31da0e",
   "crypto_rev" : "@2df57a1e26dd88e8d0614207d4b062c73209917d",
   "csslib_tag" : "@0.12.0",
-  "dartdoc_tag" : "@v0.0.3",
+  "dartdoc_tag" : "@v0.1.0+4",
   "dart_services_rev" : "@7aea2574e6f3924bf409a80afb8ad52aa2be4f97",
   "dart_style_tag": "@0.1.8+1",
   "dev_compiler_rev": "@0.1.1",
@@ -78,7 +78,7 @@ vars = {
   "nss_rev": "@87b96db4268293187d7cf741907a6d5d1d8080e0",
   "oauth2_rev": "@1bff41f4d54505c36f2d1a001b83b8b745c452f5",
   "observe_rev": "@eee2b8ec34236fa46982575fbccff84f61202ac6",
-  "observatory_pub_packages_rev": "@45565",
+  "observatory_pub_packages_rev": "@cdc4b3d4c15b9c0c8e7702dff127b440afbb7485",
   "package_config_tag": "@0.1.1",
   "path_tag": "@1.3.6",
   "petitparser_rev" : "@37878",
@@ -86,7 +86,7 @@ vars = {
   "plugin_tag": "@0.1.0",
   "pool_rev": "@e454b4b54d2987e8d2f0fbd3ac519641ada9bd0f",
   "pub_rev": "@b1ca2b72b1b23bf5a0bf16bf816d684cc809b3a2",
-  "pub_cache_tag": "@v0.0.1+2",
+  "pub_cache_tag": "@v0.1.0",
   "pub_semver_tag": "@1.2.1",
   "quiver_tag": "@0.21.4",
   "root_certificates_rev": "@c3a41df63afacec62fcb8135196177e35fe72f71",
@@ -180,9 +180,6 @@ deps = {
       Var("third_party") + "/petitparser" + Var("petitparser_rev"),
   Var("dart_root") + "/third_party/WebCore":
       Var("third_party") + "/WebCore" + Var("WebCore_rev"),
-  Var("dart_root") + "/third_party/observatory_pub_packages":
-      Var("third_party") + "/observatory_pub_packages" +
-      Var("observatory_pub_packages_rev"),
 
   Var("dart_root") + "/third_party/dart-services":
       (Var("github_mirror") % "dart-services") +
@@ -193,7 +190,7 @@ deps = {
   Var("dart_root") + "/third_party/pkg/args":
       (Var("github_mirror") % "args") + Var("args_tag"),
   Var("dart_root") + "/third_party/pkg/async":
-      "https://github.com/dart-lang/async.git" + Var("async_tag"),
+      (Var("github_mirror") % "async") + Var("async_tag"),
   Var("dart_root") + "/third_party/pkg/barback":
       (Var("github_mirror") % "barback") + Var("barback_rev"),
   Var("dart_root") + "/third_party/pkg/charcode":
@@ -251,6 +248,9 @@ deps = {
       (Var("github_mirror") % "oauth2") + Var("oauth2_rev"),
   Var("dart_root") + "/third_party/pkg/observe":
       (Var("github_mirror") % "observe") + Var("observe_rev"),
+  Var("dart_root") + "/third_party/observatory_pub_packages":
+     (Var("github_mirror") % "observatory_pub_packages") 
+      + Var("observatory_pub_packages_rev"),
   Var("dart_root") + "/third_party/pkg/package_config":
       (Var("github_mirror") % "package_config") +
       Var("package_config_tag"),
@@ -263,7 +263,7 @@ deps = {
   Var("dart_root") + "/third_party/pkg/pub_semver":
       (Var("github_mirror") % "pub_semver") + Var("pub_semver_tag"),
   Var("dart_root") + "/third_party/pkg/pub":
-      ("https://github.com/dart-lang/pub.git") + Var("pub_rev"),
+      (Var("github_mirror") % "pub") + Var("pub_rev"),
   Var("dart_root") + "/third_party/pkg/pub_cache":  
       (Var("github_mirror") % "pub_cache") + Var("pub_cache_tag"),
   Var("dart_root") + "/third_party/pkg/quiver": 
@@ -288,7 +288,7 @@ deps = {
   Var("dart_root") + "/third_party/pkg/source_span":
       (Var("github_mirror") % "source_span") + Var("source_span_tag"),
   Var("dart_root") + "/third_party/pkg/source_map_stack_trace":
-      "https://github.com/dart-lang/source_map_stack_trace.git" +
+      (Var("github_mirror") % "source_map_stack_trace") +
       Var("source_map_stack_trace_tag"),
   Var("dart_root") + "/third_party/pkg/stack_trace":
       (Var("github_mirror") % "stack_trace") + Var("stack_trace_tag"),

@@ -6,6 +6,7 @@ library context.directory.manager;
 
 import 'dart:async';
 import 'dart:collection';
+import 'dart:convert';
 import 'dart:core' hide Resource;
 
 import 'package:analysis_server/src/analysis_server.dart';
@@ -13,19 +14,31 @@ import 'package:analysis_server/src/source/optimizing_pub_package_map_provider.d
 import 'package:analysis_server/uri/resolver_provider.dart';
 import 'package:analyzer/file_system/file_system.dart';
 import 'package:analyzer/instrumentation/instrumentation.dart';
+import 'package:analyzer/source/analysis_options_provider.dart';
 import 'package:analyzer/source/package_map_resolver.dart';
+import 'package:analyzer/source/path_filter.dart';
 import 'package:analyzer/src/generated/engine.dart';
 import 'package:analyzer/src/generated/java_io.dart';
 import 'package:analyzer/src/generated/source.dart';
 import 'package:analyzer/src/generated/source_io.dart';
+import 'package:package_config/packages.dart';
+import 'package:package_config/packages_file.dart' as pkgfile show parse;
+import 'package:package_config/src/packages_impl.dart' show MapPackages;
 import 'package:path/path.dart' as pathos;
 import 'package:watcher/watcher.dart';
+import 'package:yaml/yaml.dart';
 
 /**
  * Class that maintains a mapping from included/excluded paths to a set of
  * folders that should correspond to analysis contexts.
  */
 abstract class AbstractContextManager implements ContextManager {
+
+  /**
+   * Temporary flag to hide WIP .packages support (DEP 5).
+   */
+  static bool ENABLE_PACKAGESPEC_SUPPORT = false;
+
   /**
    * The name of the `lib` directory.
    */
@@ -40,6 +53,11 @@ abstract class AbstractContextManager implements ContextManager {
    * File name of pubspec files.
    */
   static const String PUBSPEC_NAME = 'pubspec.yaml';
+
+  /**
+   * File name of package spec files.
+   */
+  static const String PACKAGE_SPEC_NAME = '.packages';
 
   /**
    * [_ContextInfo] object for each included directory in the most
@@ -93,6 +111,10 @@ abstract class AbstractContextManager implements ContextManager {
    */
   final OptimizingPubPackageMapProvider _packageMapProvider;
 
+  /// Provider of analysis options.
+  AnalysisOptionsProvider analysisOptionsProvider =
+      new AnalysisOptionsProvider();
+
   /**
    * The instrumentation service used to report instrumentation data.
    */
@@ -106,7 +128,8 @@ abstract class AbstractContextManager implements ContextManager {
   /**
    * Create and return a new analysis context.
    */
-  AnalysisContext addContext(Folder folder, UriResolver packageUriResolver);
+  AnalysisContext addContext(
+      Folder folder, UriResolver packageUriResolver, Packages packages);
 
   /**
    * Called when the set of files associated with a context have changed (or
@@ -179,6 +202,25 @@ abstract class AbstractContextManager implements ContextManager {
     return false;
   }
 
+  /// Process [options] for the context [folder].
+  void processOptionsForContext(Folder folder, Map<String, YamlNode> options) {
+    _ContextInfo info = _contexts[folder];
+    if (info == null) {
+      return;
+    }
+    YamlMap analyzer = options['analyzer'];
+    if (analyzer == null) {
+      // No options for analyzer.
+      return;
+    }
+
+    // Set ignore patterns.
+    YamlList exclude = analyzer['exclude'];
+    if (exclude != null) {
+      setIgnorePatternsForContext(folder, exclude);
+    }
+  }
+
   @override
   void refresh(List<Resource> roots) {
     // Destroy old contexts
@@ -203,6 +245,16 @@ abstract class AbstractContextManager implements ContextManager {
    * Remove the context associated with the given [folder].
    */
   void removeContext(Folder folder);
+
+  /// Sets the [ignorePatterns] for the context [folder].
+  void setIgnorePatternsForContext(Folder folder, List<String> ignorePatterns) {
+    _ContextInfo info = _contexts[folder];
+    if (info == null) {
+      return;
+    }
+    var pathFilter = info.pathFilter;
+    pathFilter.setIgnorePatterns(ignorePatterns);
+  }
 
   @override
   void setRoots(List<String> includedPaths, List<String> excludedPaths,
@@ -298,7 +350,7 @@ abstract class AbstractContextManager implements ContextManager {
    * Called when the package map for a context has changed.
    */
   void updateContextPackageUriResolver(
-      Folder contextFolder, UriResolver packageUriResolver);
+      Folder contextFolder, UriResolver packageUriResolver, Packages packages);
 
   /**
    * Resursively adds all Dart and HTML files to the [changeSet].
@@ -318,6 +370,10 @@ abstract class AbstractContextManager implements ContextManager {
     }
     for (Resource child in children) {
       String path = child.path;
+      // Path is being ignored.
+      if (info.ignored(path)) {
+        continue;
+      }
       // add files, recurse into folders
       if (child is File) {
         // ignore if should not be analyzed at all
@@ -361,7 +417,7 @@ abstract class AbstractContextManager implements ContextManager {
     for (Resource child in children) {
       String path = child.path;
       // ignore excluded files or folders
-      if (_isExcluded(path) || info.excludes(path)) {
+      if (_isExcluded(path) || info.excludes(path) || info.ignored(path)) {
         continue;
       }
       // add files, recurse into folders
@@ -389,6 +445,22 @@ abstract class AbstractContextManager implements ContextManager {
       s.cancel();
     }
     info.dependencySubscriptions.clear();
+  }
+
+  void _checkForPackagespecUpdate(
+      String path, _ContextInfo info, Folder folder) {
+    // Check to see if this is the .packages file for this context and if so,
+    // update the context's source factory.
+    if (pathContext.basename(path) == PACKAGE_SPEC_NAME &&
+        info.isPathToPackageDescription(path)) {
+      File packagespec = resourceProvider.getFile(path);
+      if (packagespec.exists) {
+        Packages packages = _readPackagespec(packagespec);
+        if (packages != null) {
+          updateContextPackageUriResolver(folder, null, packages);
+        }
+      }
+    }
   }
 
   /**
@@ -471,16 +543,32 @@ abstract class AbstractContextManager implements ContextManager {
    * Create a new empty context associated with [folder].
    */
   _ContextInfo _createContext(
-      Folder folder, File pubspecFile, List<_ContextInfo> children) {
+      Folder folder, File packagespecFile, List<_ContextInfo> children) {
     _ContextInfo info = new _ContextInfo(
-        folder, pubspecFile, children, normalizedPackageRoots[folder.path]);
+        folder, packagespecFile, children, normalizedPackageRoots[folder.path]);
     _contexts[folder] = info;
+    var options = analysisOptionsProvider.getOptions(folder);
+    processOptionsForContext(folder, options);
     info.changeSubscription = folder.changes.listen((WatchEvent event) {
       _handleWatchEvent(folder, info, event);
     });
     try {
-      UriResolver packageUriResolver = _computePackageUriResolver(folder, info);
-      info.context = addContext(folder, packageUriResolver);
+      Packages packages;
+      UriResolver packageUriResolver;
+
+      if (ENABLE_PACKAGESPEC_SUPPORT) {
+        // Try .packages first.
+        if (pathos.basename(packagespecFile.path) == PACKAGE_SPEC_NAME) {
+          packages = _readPackagespec(packagespecFile);
+        }
+      }
+
+      // Next resort to a package uri resolver.
+      if (packages == null) {
+        packageUriResolver = _computePackageUriResolver(folder, info);
+      }
+
+      info.context = addContext(folder, packageUriResolver, packages);
       info.context.name = folder.path;
     } catch (_) {
       info.changeSubscription.cancel();
@@ -496,13 +584,13 @@ abstract class AbstractContextManager implements ContextManager {
    * created for them and excluded from the context associated with the
    * [folder].
    *
-   * If [withPubspecOnly] is `true`, a context will be created only if there
-   * is a 'pubspec.yaml' file in the [folder].
+   * If [withPackageSpecOnly] is `true`, a context will be created only if there
+   * is a 'pubspec.yaml' or '.packages' file in the [folder].
    *
-   * Returns create pubspec-based contexts.
+   * Returns created contexts.
    */
-  List<_ContextInfo> _createContexts(Folder folder, bool withPubspecOnly) {
-    // try to find subfolders with pubspec files
+  List<_ContextInfo> _createContexts(Folder folder, bool withPackageSpecOnly) {
+    // Try to find subfolders with pubspecs or .packages files.
     List<_ContextInfo> children = <_ContextInfo>[];
     try {
       for (Resource child in folder.getChildren()) {
@@ -514,20 +602,31 @@ abstract class AbstractContextManager implements ContextManager {
       // The directory either doesn't exist or cannot be read. Either way, there
       // are no subfolders that need to be added.
     }
-    // check whether there is a pubspec in the folder
-    File pubspecFile = folder.getChild(PUBSPEC_NAME);
-    if (pubspecFile.exists) {
+
+    File packageSpec;
+
+    if (ENABLE_PACKAGESPEC_SUPPORT) {
+      // Start by looking for .packages.
+      packageSpec = folder.getChild(PACKAGE_SPEC_NAME);
+    }
+
+    // Fall back to looking for a pubspec.
+    if (packageSpec == null || !packageSpec.exists) {
+      packageSpec = folder.getChild(PUBSPEC_NAME);
+    }
+
+    if (packageSpec.exists) {
       return <_ContextInfo>[
-        _createContextWithSources(folder, pubspecFile, children)
+        _createContextWithSources(folder, packageSpec, children)
       ];
     }
-    // no pubspec, done
-    if (withPubspecOnly) {
+    // No packagespec? Done.
+    if (withPackageSpecOnly) {
       return children;
     }
-    // OK, create a context without a pubspec
+    // OK, create a context without a packagespec.
     return <_ContextInfo>[
-      _createContextWithSources(folder, pubspecFile, children)
+      _createContextWithSources(folder, packageSpec, children)
     ];
   }
 
@@ -557,11 +656,11 @@ abstract class AbstractContextManager implements ContextManager {
   }
 
   /**
-   * Extract a new [pubspecFile]-based context from [oldInfo].
+   * Extract a new [packagespecFile]-based context from [oldInfo].
    */
-  void _extractContext(_ContextInfo oldInfo, File pubspecFile) {
-    Folder newFolder = pubspecFile.parent;
-    _ContextInfo newInfo = _createContext(newFolder, pubspecFile, []);
+  void _extractContext(_ContextInfo oldInfo, File packagespecFile) {
+    Folder newFolder = packagespecFile.parent;
+    _ContextInfo newInfo = _createContext(newFolder, packagespecFile, []);
     newInfo.parent = oldInfo;
     // prepare sources to extract
     Map<String, Source> extractedSources = new HashMap<String, Source>();
@@ -606,18 +705,55 @@ abstract class AbstractContextManager implements ContextManager {
     if (info.excludes(path)) {
       return;
     }
+    if (info.ignored(path)) {
+      return;
+    }
     // handle the change
     switch (event.type) {
       case ChangeType.ADD:
         if (_isInPackagesDir(path, folder)) {
           return;
         }
+
         Resource resource = resourceProvider.getResource(path);
-        // pubspec was added in a sub-folder, extract a new context
-        if (_isPubspec(path) && info.isRoot && !info.isPubspec(path)) {
-          _extractContext(info, resource);
-          return;
+
+        if (ENABLE_PACKAGESPEC_SUPPORT) {
+          String directoryPath = pathContext.dirname(path);
+
+          // Check to see if we need to create a new context.
+          if (info.isRoot) {
+
+            // Only create a new context if this is not the same directory
+            // described by our info object.
+            if (info.folder.path != directoryPath) {
+              if (_isPubspec(path)) {
+                // Check for a sibling .packages file.
+                if (!resourceProvider.getFile(
+                    pathos.join(directoryPath, PACKAGE_SPEC_NAME)).exists) {
+                  _extractContext(info, resource);
+                  return;
+                }
+              }
+              if (_isPackagespec(path)) {
+                // Check for a sibling pubspec.yaml file.
+                if (!resourceProvider
+                    .getFile(pathos.join(directoryPath, PUBSPEC_NAME)).exists) {
+                  _extractContext(info, resource);
+                  return;
+                }
+              }
+            }
+          }
+        } else {
+          // pubspec was added in a sub-folder, extract a new context
+          if (_isPubspec(path) &&
+              info.isRoot &&
+              !info.isPathToPackageDescription(path)) {
+            _extractContext(info, resource);
+            return;
+          }
         }
+
         // If the file went away and was replaced by a folder before we
         // had a chance to process the event, resource might be a Folder.  In
         // that case don't add it.
@@ -633,11 +769,41 @@ abstract class AbstractContextManager implements ContextManager {
         }
         break;
       case ChangeType.REMOVE:
-        // pubspec was removed, merge the context into its parent
-        if (info.isPubspec(path) && !info.isRoot) {
-          _mergeContext(info);
-          return;
+
+        // If package spec info is removed, check to see if we can merge contexts.
+        // Note that it's important to verify that there is NEITHER a .packages nor a
+        // lingering pubspec.yaml before merging.
+        if (!info.isRoot) {
+          if (ENABLE_PACKAGESPEC_SUPPORT) {
+            String directoryPath = pathContext.dirname(path);
+
+            // Only merge if this is the same directory described by our info object.
+            if (info.folder.path == directoryPath) {
+              if (_isPubspec(path)) {
+                // Check for a sibling .packages file.
+                if (!resourceProvider.getFile(
+                    pathos.join(directoryPath, PACKAGE_SPEC_NAME)).exists) {
+                  _mergeContext(info);
+                  return;
+                }
+              }
+              if (_isPackagespec(path)) {
+                // Check for a sibling pubspec.yaml file.
+                if (!resourceProvider
+                    .getFile(pathos.join(directoryPath, PUBSPEC_NAME)).exists) {
+                  _mergeContext(info);
+                  return;
+                }
+              }
+            }
+          } else {
+            if (info.isPathToPackageDescription(path)) {
+              _mergeContext(info);
+              return;
+            }
+          }
         }
+
         List<Source> sources = info.context.getSourcesWithFullName(path);
         if (!sources.isEmpty) {
           ChangeSet changeSet = new ChangeSet();
@@ -660,6 +826,9 @@ abstract class AbstractContextManager implements ContextManager {
         break;
     }
 
+    //TODO(pquitslund): find the right place for this
+    _checkForPackagespecUpdate(path, info, folder);
+
     if (info.packageMapInfo != null &&
         info.packageMapInfo.isChangedDependency(path, resourceProvider)) {
       _recomputePackageUriResolver(info);
@@ -669,9 +838,7 @@ abstract class AbstractContextManager implements ContextManager {
   /**
    * Returns `true` if the given [path] is excluded by [excludedPaths].
    */
-  bool _isExcluded(String path) {
-    return _isExcludedBy(excludedPaths, path);
-  }
+  bool _isExcluded(String path) => _isExcludedBy(excludedPaths, path);
 
   /**
    * Returns `true` if the given [path] is excluded by [excludedPaths].
@@ -695,12 +862,10 @@ abstract class AbstractContextManager implements ContextManager {
     return pathParts.contains(PACKAGES_NAME);
   }
 
-  /**
-   * Returns `true` if the given absolute [path] is a pubspec file.
-   */
-  bool _isPubspec(String path) {
-    return pathContext.basename(path) == PUBSPEC_NAME;
-  }
+  bool _isPackagespec(String path) =>
+      pathContext.basename(path) == PACKAGE_SPEC_NAME;
+
+  bool _isPubspec(String path) => pathContext.basename(path) == PUBSPEC_NAME;
 
   /**
    * Merges [info] context into its parent.
@@ -721,6 +886,18 @@ abstract class AbstractContextManager implements ContextManager {
     }
   }
 
+  Packages _readPackagespec(File specFile) {
+    try {
+      String contents = specFile.readAsStringSync();
+      Map<String, Uri> map =
+          pkgfile.parse(UTF8.encode(contents), new Uri.file(specFile.path));
+      return new MapPackages(map);
+    } catch (_) {
+      //TODO(pquitslund): consider creating an error for the spec file.
+      return null;
+    }
+  }
+
   /**
    * Recompute the package URI resolver for the context described by [info],
    * and update the client appropriately.
@@ -732,7 +909,7 @@ abstract class AbstractContextManager implements ContextManager {
     // "pub list" is in progress is just going to get thrown away anyhow.
     UriResolver packageUriResolver =
         _computePackageUriResolver(info.folder, info);
-    updateContextPackageUriResolver(info.folder, packageUriResolver);
+    updateContextPackageUriResolver(info.folder, packageUriResolver, null);
   }
 
   /**
@@ -859,6 +1036,9 @@ class _ContextInfo {
    */
   final Folder folder;
 
+  /// The [PathFilter] used to filter sources from being analyzed.
+  final PathFilter pathFilter;
+
   /**
    * The enclosed pubspec-based contexts.
    */
@@ -875,9 +1055,9 @@ class _ContextInfo {
   _ContextInfo parent;
 
   /**
-   * The `pubspec.yaml` file path for this context.
+   * The package description file path for this context.
    */
-  String pubspecPath;
+  String packageDescriptionPath;
 
   /**
    * Stream subscription we are using to watch the context's directory for
@@ -910,8 +1090,11 @@ class _ContextInfo {
    */
   OptimizingPubPackageMapInfo packageMapInfo;
 
-  _ContextInfo(this.folder, File pubspecFile, this.children, this.packageRoot) {
-    pubspecPath = pubspecFile.path;
+  _ContextInfo(
+      Folder folder, File packagespecFile, this.children, this.packageRoot)
+      : folder = folder,
+        pathFilter = new PathFilter(folder.path, null) {
+    packageDescriptionPath = packagespecFile.path;
     for (_ContextInfo child in children) {
       child.parent = this;
     }
@@ -934,14 +1117,15 @@ class _ContextInfo {
   /**
    * Returns `true` if [resource] is excluded, as it is in one of the children.
    */
-  bool excludesResource(Resource resource) {
-    return excludes(resource.path);
-  }
+  bool excludesResource(Resource resource) => excludes(resource.path);
+
+  /// Returns `true` if  [path] should be ignored.
+  bool ignored(String path) => pathFilter.ignored(path);
 
   /**
-   * Returns `true` if [path] is the pubspec file of this context.
+   * Returns `true` if [path] is the package description file for this context 
+   * (pubspec.yaml or .packages).
    */
-  bool isPubspec(String path) {
-    return path == pubspecPath;
-  }
+  bool isPathToPackageDescription(String path) =>
+      path == packageDescriptionPath;
 }
