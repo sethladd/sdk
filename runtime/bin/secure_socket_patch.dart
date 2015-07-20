@@ -13,7 +13,7 @@ patch class _SecureFilter {
 }
 
 patch class X509Certificate {
-  /* patch */ factory X509Certificate() => new _X509Impl();
+  /* patch */ factory X509Certificate._() => new _X509CertificateImpl();
 }
 
 class _SecureSocket extends _Socket implements SecureSocket {
@@ -160,12 +160,14 @@ class _SecurityContext
 }
 
 /**
- * _X509Impl wraps an X509 certificate object held by the BoringSSL
+ * _X509CertificateImpl wraps an X509 certificate object held by the BoringSSL
  * library. It exposes the fields of the certificate object.
  */
-class _X509Impl extends NativeFieldWrapperClass1
+class _X509CertificateImpl extends NativeFieldWrapperClass1
     implements X509Certificate {
-  _X509Impl();  // The native field must be set manually on a new object.
+  // The native field must be set manually on a new object, in native code.
+  // This is done by WrappedX509 in secure_socket.cc.
+  _X509CertificateImpl();
 
   String get subject native "X509_Subject";
   String get issuer native "X509_Issuer";

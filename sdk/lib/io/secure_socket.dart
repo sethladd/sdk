@@ -340,7 +340,7 @@ abstract class RawSecureSocket implements RawSocket {
  * get the fields of the certificate.
  */
 abstract class X509Certificate {
-  external factory X509Certificate();
+  external factory X509Certificate._();
 
   String get subject;
   String get issuer;

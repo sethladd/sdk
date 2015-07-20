@@ -454,9 +454,13 @@ void FUNCTION_NAME(SecurityContext_SetAlpnProtocols)(
       ThrowIfError(Dart_GetNativeArgument(args, 1));
   Dart_Handle is_server_handle =
       ThrowIfError(Dart_GetNativeArgument(args, 2));
-  bool is_server = DartUtils::GetBooleanValue(is_server_handle);
-
-  SetAlpnProtocolList(protocols_handle, NULL, context, is_server);
+  if (Dart_IsBoolean(is_server_handle)) {
+    bool is_server = DartUtils::GetBooleanValue(is_server_handle);
+    SetAlpnProtocolList(protocols_handle, NULL, context, is_server);
+  } else {
+    Dart_ThrowException(DartUtils::NewDartArgumentError(
+        "Non-boolean is_server argument passed to SetAlpnProtocols"));
+  }
 }
 
 
@@ -643,13 +647,13 @@ bool SSLFilter::ProcessAllBuffers(int starts[kNumBuffers],
 static Dart_Handle WrappedX509(X509* certificate) {
   if (certificate == NULL) return Dart_Null();
   Dart_Handle x509_type =
-          DartUtils::GetDartType(DartUtils::kIOLibURL, "X509Certificate");
-    //  DartUtils::GetDartType(DartUtils::kIOLibURL, "X509Impl");
+      DartUtils::GetDartType(DartUtils::kIOLibURL, "X509Certificate");
   Dart_Handle arguments[] = { NULL };
   if (Dart_IsError(x509_type)) {
     Dart_PropagateError(x509_type);
   }
-  Dart_Handle result = Dart_New(x509_type, Dart_Null(), 0, arguments);
+  Dart_Handle result =
+      Dart_New(x509_type, DartUtils::NewString("_"), 0, arguments);
   if (Dart_IsError(result)) {
     Dart_PropagateError(result);
   }

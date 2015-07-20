@@ -421,7 +421,7 @@ class SecurityContext {
 @patch
 class X509Certificate {
   @patch
-  factory X509Certificate() {
+  factory X509Certificate._() {
     throw new UnsupportedError("X509Certificate constructor");
   }
 }
